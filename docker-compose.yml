@@ -1,0 +1,26 @@
+version: '3.8'
+services:
+  streamlit-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+      - huggingface_cache:/root/.cache/huggingface
+    environment:
+      - PYTHONPATH=/app
+      - MODEL_ID=${MODEL_ID}
+      - HUGGING_FACE_TOKEN=${HUGGING_FACE_TOKEN}
+    deploy:
+      resources: 
+        reservations: 
+          devices: 
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  huggingface_cache:
