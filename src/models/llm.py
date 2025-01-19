@@ -1,61 +1,78 @@
 import torch
-from transformers import BartForConditionalGeneration, BartTokenizer
+from transformers import AutoModelForCausalLM ,AutoTokenizer , BitsAndBytesConfig
 from src.config import settings
 
 def create_llm():
-    try:
-        model = BartForConditionalGeneration.from_pretrained('facebook/bart-large-cnn')
-        tokenizer = BartTokenizer.from_pretrained('facebook/bart-large-cnn')
+    tokenizer = AutoTokenizer.from_pretrained(
+        settings.MODEL_ID,
+        token=settings.HF_TOKEN,
+    )
 
-        print(f"CUDA available: {torch.cuda.is_available()}")
-        if torch.cuda.is_available():
-            print(f"CUDA device count: {torch.cuda.device_count()}")
-            print(f"CUDA device name: {torch.cuda.get_device_name(0)}")
-        
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = model.to(device)
-        
-        print(f"Model loaded successfully on {device}")
-        return model, tokenizer, device
-        
-    except Exception as e:
-        print(f"Error loading model: {str(e)}")
-        raise
+    quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype = torch.float16,
+            bnb_4bit_use_double_quant= True,
+            bnb_4bit_quant_type="nf4"
+    )
+    if tokenizer.pad_token is None: 
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
 
-def generate_summary(model, tokenizer, text: str, device: str, custom_prompt: str = None) -> str:
-    """Generate summary using BART model"""
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"CUDA device count: {torch.cuda.device_count()}")
+        print(f"CUDA device name: {torch.cuda.get_device_name(0)}")
+    
+    model = AutoModelForCausalLM.from_pretrained(
+        settings.MODEL_ID,
+        token=settings.HF_TOKEN,
+        device_map="auto",
+        trust_remote_code=True,
+        quantization_config= quantization_config
+    )
+
+    if model.config.pad_token_id is None:
+        model.config.pad_token_id = tokenizer.pad_token_id
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return model, tokenizer, device
+
+def generate_summary(model, tokenizer, text, device, custom_prompt=None):
     try:
-        # Prepare the input text
-        if custom_prompt:
-            text = f"{custom_prompt}\n\n{text}"
+        cleaned_text = text.split("Text to summarize:")[-1].strip() if "Text to summarize:" in text else text
+
+        instruction = custom_prompt if custom_prompt else "Summarize the article"
         
-        # Tokenize
+        prompt = f"<s>[INST] {instruction}:\n\n{cleaned_text}[/INST]"
+        
         inputs = tokenizer(
-            text,
-            max_length=1024,
+            prompt,
+            return_tensors="pt",
+            max_length=settings.MAX_LENGTH,
             truncation=True,
-            padding='max_length',
-            return_tensors="pt"
-        )
+            padding=True
+        ).to(device)
         
-        # Move inputs to the same device as model
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-        
-        # Generate summary
         with torch.no_grad():
-            summary_ids = model.generate(
-                inputs["input_ids"],
-                max_length=150,
-                min_length=40,
-                length_penalty=2.0,
-                num_beams=4,
-                early_stopping=True
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=512,
+                min_length=settings.MIN_LENGTH,
+                do_sample=True,
+                temperature=settings.TEMPERATURE,
+                top_p=settings.TOP_P,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                repetition_penalty=1.2,
+                no_repeat_ngram_size=3
             )
         
-        # Decode summary
-        summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+        full_output = tokenizer.decode(outputs[0] , skip_special_tokens=True)
+
+        summary = full_output.split('/[INST]')[-1].strip()
+
         return summary
-        
     except Exception as e:
-        print(f"Error generating summary: {str(e)}")
-        raise
+        print(f"Error in generate_sumamry: {str(e)}")
+        raise Exception(f"Summary Generation Failed: {str(e)}")
+    

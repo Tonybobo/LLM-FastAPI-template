@@ -1,6 +1,6 @@
 import streamlit as st
-from src.models.llm import create_llm, generate_summary
-from src.loaders.web_loader import WebLoader
+from src.models.llm import create_llm , generate_summary
+from loaders.web_loader import WebLoader
 import asyncio
 import httpx
 

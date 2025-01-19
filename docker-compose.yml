@@ -12,8 +12,6 @@ services:
       - huggingface_cache:/root/.cache/huggingface
     environment:
       - PYTHONPATH=/app
-      - MODEL_ID=${MODEL_ID}
-      - HUGGING_FACE_TOKEN=${HUGGING_FACE_TOKEN}
     deploy:
       resources: 
         reservations: 
