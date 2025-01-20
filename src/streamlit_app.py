@@ -45,10 +45,8 @@ def main():
                         loader.load_and_process(url)
                     )
                     
-                    # Combine all document chunks into one text
                     full_text = " ".join([doc.page_content for doc in documents])
                     
-                    # Generate summary
                     summary = generate_summary(model, tokenizer, full_text, device, custom_prompt)
                     
                     st.subheader("Summary")

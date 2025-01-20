@@ -1,60 +1,79 @@
-from langchain.document_loaders import TextLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from bs4 import BeautifulSoup
 import httpx
-import pandas as pd
+from urllib.parse import urlparse
+from abc import ABC,abstractmethod 
+import re
 from typing import List
 from langchain.docstore.document import Document
-import tempfile
 
-class WebLoader:
+class BaseWebLoader(ABC):
     def __init__(self):
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=2000,
-            chunk_overlap=200
-        )
+        self.client = httpx.AsyncClient()
+
+    def _clean_text(self, text:str) -> str:
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
+
+    @abstractmethod
+    def parse_html(self , soup: BeautifulSoup) -> str:
+        """Abstract method to be implemented by specific new media parsers"""
+        pass
     
-    async def fetch_content(self, url: str) -> str:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=self.headers)
-            response.raise_for_status()
-            return response.text
-    
-    def clean_html(self, html_content: str) -> str:
-        soup = BeautifulSoup(html_content, 'lxml')
-        
-        # Handle tables
-        tables = soup.find_all('table')
-        for table in tables:
-            try:
-                df = pd.read_html(str(table))[0]
-                markdown_table = df.to_markdown(index=False)
-                table.replace_with(soup.new_string(f"\n{markdown_table}\n"))
-            except:
-                table.decompose()
-        
-        # Remove unwanted elements
-        for element in soup(['script', 'style', 'iframe', 'nav', 'footer', 'header']):
+    def _remove_common_elements(self , soup: BeautifulSoup , elements: list =None):
+        """Remove unwanted elements from HTML"""
+        default_elements = ['script' , 'style', 'nav' , 'header' , 'footer' , 'aside']
+        elements_to_remove = default_elements + (elements if elements else []) 
+
+        for element in soup.find_all(elements_to_remove):
             element.decompose()
-        
-        # Get text content
-        text = soup.get_text(separator='\n', strip=True)
-        
-        # Clean up extra whitespace
-        lines = (line.strip() for line in text.splitlines())
-        return '\n'.join(line for line in lines if line)
+    
+
+class WebLoader(BaseWebLoader):
+    def __init__(self):
+        super().__init__()
+        self.parsers = {}
+        self._register_parsers()
+    
+    def _register_parsers(self):
+        """Register all available parsers"""
+
+        from src.loaders.media import(
+            GenericParser,
+            AsiaoneParser
+        )
+
+        self.parsers = {
+            'asiaone.com': AsiaoneParser(),
+            'generic' : GenericParser()
+        }
+    def parse_html(self, soup: BeautifulSoup) -> str:
+        """Default implementation using generic parser if no available parser"""
+        return self.parsers['generic'].parse_html(soup)
     
     async def load_and_process(self, url: str) -> List[Document]:
-        html_content = await self.fetch_content(url)
+        try: 
+            response = await self.client.get(url)
+            response.raise_for_status()
+
+            soup = BeautifulSoup(response.text , 'html.parser')
+            domain = urlparse(url).netloc.lower()
+
+            parser = self.parsers.get(domain , self.parsers['generic'])
+            text = parser.parse_html(soup)
+
+            if not text:
+                raise Exception("No content could be extracted from the webpage")
+
+            document = Document(
+                page_content=text,
+                metadata={
+                    "source": url,
+                    "title": soup.title.string if soup.title else "",
+                    "domain": domain
+                }
+            )
+
+            return [document] if document else []
         
-        cleaned_text = self.clean_html(html_content)
-
-        document = Document(
-            page_content=cleaned_text,
-            metadata={"source":url }
-        )
-
-        return [document] 
+        except Exception as e: 
+            raise Exception(f"Error loading URL {url} : {str(e)}")
