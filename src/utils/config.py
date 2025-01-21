@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Settings(BaseSettings):
-    MODEL_ID: str = os.getenv("MODEL_ID" , "google/pegasus-cnn-dailymail") 
+    MODEL_ID: str = os.getenv("MODEL_ID" , "google/pegasus-cnn_dailymail") 
     HF_TOKEN:str = os.getenv("HF_TOKEN")
     MAX_LENGTH: int = 1024 
     MIN_LENGTH: int = 30

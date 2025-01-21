@@ -3,26 +3,47 @@ from src.models.llm import create_llm , generate_summary
 from loaders.web_loader import WebLoader
 import asyncio
 import httpx
+import nest_asyncio
+
+nest_asyncio.apply()
 
 st.set_page_config(page_title="Article Summarizer", layout="wide")
 
 @st.cache_resource
 def initialize_components():
-    model, tokenizer, device = create_llm()
-    loader = WebLoader()
-    return model, tokenizer, loader, device
+    try: 
+        model, tokenizer, device = create_llm()
+        loader = WebLoader()
+        return model, tokenizer, loader, device
+    except Exception as e:
+        st.error(f"Error initializing component: {str(e)}")
+        return None, None , None , None
 
-def validate_url(url: str) -> bool:
+async def validate_url(url: str) -> bool:
     try:
-        response = httpx.head(url)
-        return response.is_success
-    except:
+        async with httpx.AsyncClient() as client:
+            response = await client.head(url)
+            return response.is_success
+    except Exception:
         return False
+
+async def process_article(loader , url):
+    """Process article in async await manner"""
+    try:
+        documents = await loader.load_and_process(url)
+        return documents
+    except Exception as e:
+        raise Exception(f"Error loading article : {str(e)}")
 
 def main():
     st.title("Article Summarizer")
     
-    model, tokenizer, loader, device = initialize_components()
+    components = initialize_components()
+    if not all(components):
+        st.error("Failed to initialize the required component. Please refresh")
+        return
+
+    model , tokenizer , loader , device = components
     
     url = st.text_input("Enter article URL:")
     custom_prompt = st.text_area(
@@ -31,33 +52,40 @@ def main():
     )
     
     if st.button("Generate Summary"):
-        if url:
-            if not validate_url(url):
-                st.error("Invalid or inaccessible URL. Please check the URL and try again.")
+            if not url:
+                st.error("Please enter a URL.")
                 return
+            
+            with st.spinner("Validating URL..."):
+                is_valid = asyncio.run(validate_url(url))
+                if not is_valid:
+                    st.error("Invalid or inaccessible URL. Please check the url and try again")
+                    return
                 
             with st.spinner("Processing article..."):
                 try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    
-                    documents = loop.run_until_complete(
-                        loader.load_and_process(url)
-                    )
+                    documents = asyncio.run(process_article(loader , url))
+
+                    if not documents:
+                        st.error("No content could be extracted from the article")
                     
                     full_text = " ".join([doc.page_content for doc in documents])
                     
-                    summary = generate_summary(model, tokenizer, full_text, device, custom_prompt)
+                    with st.spinner("Generating Summary..."):
                     
-                    st.subheader("Summary")
-                    st.write(summary)
-                    
-                    with st.expander("View Source Text"):
-                        st.text(full_text)
+                        summary = generate_summary(model, tokenizer, full_text, device, custom_prompt)
+                        
+                        st.subheader("Summary")
+                        st.markdown(f"<p>{summary}</p>" , unsafe_allow_html=True)
+                        
+                        with st.expander("View Source Text"):
+                            st.text(full_text)
                             
                 except Exception as e:
                     st.error(f"Error processing the article: {str(e)}")
-                    st.error(f"Error details: {type(e).__name__}")  # Add more error details
+                    st.error(f"Error type: {type(e).__name__}")
+                    if hasattr(e, '__cause__') and e.__cause__:
+                        st.error(f"Caused by: {str(e.__cause__)}")
 
 if __name__ == "__main__":
     main()

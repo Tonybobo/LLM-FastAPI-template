@@ -1,7 +1,11 @@
 import torch
 import warnings
+import re
 from transformers import  AutoModelForSeq2SeqLM,AutoTokenizer 
-from src.config import settings
+from src.utils.config import settings
+from src.utils.logger import get_logger
+
+logger = get_logger()
 
 def create_llm():
     try:
@@ -21,18 +25,45 @@ def create_llm():
 
         model.eval()
 
-        print(f"Model device: {next(model.parameters()).device}")
+        logger.info(f"Model device: {next(model.parameters()).device}")
 
         return model, tokenizer, device
 
     except Exception as e:
-        print(f"Error initializing model: {str(e)}")
-        raise
+        logger.error(f"Error initializing model: {str(e)}")
+
+def format_prompt(text , custom_prompt=None):
+    """Format the input text with specific constraints for better summarization"""
+    if custom_prompt:
+        formatted = (
+            f"{custom_prompt}\n\n"
+            f"Length Requirements:\n"
+            f"- 3 to 4 sentences\n"
+            f"- Between 100 and 200 words\n"
+            f"- Maintain original writing style\n",
+            f"- Include detailed elaboration\n\n"
+            f"Article: {text}"
+        )
+    else:
+        formatted = text
+    return formatted
+
+def format_summary(text:str) -> str:
+    """Clean and format Summary"""
+
+    text = re.sub(r'<n>', '\n', text)
+    text = re.sub(r'\.(?=[A-Z])', '. ', text)
+
+    if not text.endswith(('.' , '!' , '?')):
+        text += '.'
+
+    return text.strip()
+    
 
 def generate_summary(model, tokenizer, text, device, custom_prompt=None):
     try:
         
-        prompt = f"{custom_prompt}:{text}" if custom_prompt else text 
+        prompt = format_prompt(text , custom_prompt)
         
         inputs = tokenizer(
             prompt,
@@ -49,22 +80,24 @@ def generate_summary(model, tokenizer, text, device, custom_prompt=None):
             outputs = model.generate(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                max_length=128,      
-                min_length=30,       
+                max_length=512,      
+                min_length=100,       
                 num_beams=8,         
-                length_penalty=1.2,   
+                length_penalty=2.0,   
                 no_repeat_ngram_size=3, 
                 early_stopping=True,
                 top_k=50,            
                 top_p=0.95,          
-                do_sample=True 
+                do_sample=True ,
+                temperature=0.7,
+                repetition_penalty=1.2
             )
         
         summary = tokenizer.decode(outputs[0] , skip_special_tokens=True)
 
-        return summary 
+        return format_summary(summary) 
 
     except Exception as e:
-        print(f"Error in generate_sumamry: {str(e)}")
+        logger.error(f"Error in generate_sumamry: {str(e)}")
         raise Exception(f"Summary Generation Failed: {str(e)}")
     
