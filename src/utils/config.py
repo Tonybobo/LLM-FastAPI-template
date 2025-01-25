@@ -5,10 +5,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Settings(BaseSettings):
-    MODEL_ID: str = os.getenv("MODEL_ID" , "mistralai/Mistral-7B-Instruct-v0.3")  # Updated to use the latest Mistral model
+    MODEL_ID: str = os.getenv("MODEL_ID" , "google/pegasus-cnn_dailymail") 
     HF_TOKEN:str = os.getenv("HF_TOKEN")
-    MAX_LENGTH: int = 4096 
-    MIN_LENGTH: int = 50
+    MAX_LENGTH: int = 1024 
+    MIN_LENGTH: int = 30
     TEMPERATURE: float = 0.7
     TOP_P : float = 0.95
     

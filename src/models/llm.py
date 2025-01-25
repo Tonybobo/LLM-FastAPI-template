@@ -1,78 +1,103 @@
 import torch
-from transformers import AutoModelForCausalLM ,AutoTokenizer , BitsAndBytesConfig
-from src.config import settings
+import warnings
+import re
+from transformers import  AutoModelForSeq2SeqLM,AutoTokenizer 
+from src.utils.config import settings
+from src.utils.logger import get_logger
+
+logger = get_logger()
 
 def create_llm():
-    tokenizer = AutoTokenizer.from_pretrained(
-        settings.MODEL_ID,
-        token=settings.HF_TOKEN,
-    )
+    try:
+        warnings.filterwarnings("ignore", message="Some weights of PegasusForConditionalGeneration")
 
-    quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype = torch.float16,
-            bnb_4bit_use_double_quant= True,
-            bnb_4bit_quant_type="nf4"
-    )
-    if tokenizer.pad_token is None: 
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+        tokenizer = AutoTokenizer.from_pretrained(
+            settings.MODEL_ID,
+            trust_remote_code=True,
+        )
+        
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    print(f"CUDA available: {torch.cuda.is_available()}")
-    if torch.cuda.is_available():
-        print(f"CUDA device count: {torch.cuda.device_count()}")
-        print(f"CUDA device name: {torch.cuda.get_device_name(0)}")
+        model = AutoModelForSeq2SeqLM.from_pretrained(
+            settings.MODEL_ID,
+            torch_dtype=torch.float32,
+        ).to(device)
+
+        model.eval()
+
+        logger.info(f"Model device: {next(model.parameters()).device}")
+
+        return model, tokenizer, device
+
+    except Exception as e:
+        logger.error(f"Error initializing model: {str(e)}")
+
+def format_prompt(text , custom_prompt=None):
+    """Format the input text with specific constraints for better summarization"""
+    if custom_prompt:
+        formatted = (
+            f"{custom_prompt}\n\n"
+            f"Length Requirements:\n"
+            f"- 3 to 4 sentences\n"
+            f"- Between 100 and 200 words\n"
+            f"- Maintain original writing style\n",
+            f"- Include detailed elaboration\n\n"
+            f"Article: {text}"
+        )
+    else:
+        formatted = text
+    return formatted
+
+def format_summary(text:str) -> str:
+    """Clean and format Summary"""
+
+    text = re.sub(r'<n>', '\n', text)
+    text = re.sub(r'\.(?=[A-Z])', '. ', text)
+
+    if not text.endswith(('.' , '!' , '?')):
+        text += '.'
+
+    return text.strip()
     
-    model = AutoModelForCausalLM.from_pretrained(
-        settings.MODEL_ID,
-        token=settings.HF_TOKEN,
-        device_map="auto",
-        trust_remote_code=True,
-        quantization_config= quantization_config
-    )
-
-    if model.config.pad_token_id is None:
-        model.config.pad_token_id = tokenizer.pad_token_id
-    
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return model, tokenizer, device
 
 def generate_summary(model, tokenizer, text, device, custom_prompt=None):
     try:
-        cleaned_text = text.split("Text to summarize:")[-1].strip() if "Text to summarize:" in text else text
-
-        instruction = custom_prompt if custom_prompt else "Summarize the article"
         
-        prompt = f"<s>[INST] {instruction}:\n\n{cleaned_text}[/INST]"
+        prompt = format_prompt(text , custom_prompt)
         
         inputs = tokenizer(
             prompt,
             return_tensors="pt",
             max_length=settings.MAX_LENGTH,
             truncation=True,
-            padding=True
-        ).to(device)
+            padding="longest"
+        )
+
+        input_ids = inputs['input_ids'].to(device)
+        attention_mask = inputs['attention_mask'].to(device)
         
         with torch.no_grad():
             outputs = model.generate(
-                **inputs,
-                max_new_tokens=512,
-                min_length=settings.MIN_LENGTH,
-                do_sample=True,
-                temperature=settings.TEMPERATURE,
-                top_p=settings.TOP_P,
-                pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-                repetition_penalty=1.2,
-                no_repeat_ngram_size=3
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_length=512,      
+                min_length=100,       
+                num_beams=8,         
+                length_penalty=2.0,   
+                no_repeat_ngram_size=3, 
+                early_stopping=True,
+                top_k=50,            
+                top_p=0.95,          
+                do_sample=True ,
+                temperature=0.7,
+                repetition_penalty=1.2
             )
         
-        full_output = tokenizer.decode(outputs[0] , skip_special_tokens=True)
+        summary = tokenizer.decode(outputs[0] , skip_special_tokens=True)
 
-        summary = full_output.split('/[INST]')[-1].strip()
+        return format_summary(summary) 
 
-        return summary
     except Exception as e:
-        print(f"Error in generate_sumamry: {str(e)}")
+        logger.error(f"Error in generate_sumamry: {str(e)}")
         raise Exception(f"Summary Generation Failed: {str(e)}")
     
