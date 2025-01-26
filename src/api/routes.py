@@ -1,13 +1,13 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl
 from typing import Optional
-from src.models.llm import create_llm , generate_summary 
 from src.loaders.web_loader import WebLoader
 from src.utils.logger import get_logger
+from src.models.model_manager import create_llm 
 
 app = FastAPI(title="Article Summarizer API")
 
-model, tokenizer, device = create_llm()
+bart_manager = create_llm()
 loader = WebLoader()
 logger = get_logger()
 
@@ -24,7 +24,7 @@ async def summarize_url(request: SummaryRequest):
         
         full_text = " ".join([doc.page_content for doc in documents])
         
-        summary = generate_summary(model, tokenizer, full_text, device, request.custom_prompt)
+        summary = bart_manager.generate_summary(full_text , request.custom_prompt) 
 
         logger.info(f" response ====> url: {request.url} , summary : {summary}")
         

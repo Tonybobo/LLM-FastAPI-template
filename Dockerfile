@@ -1,38 +1,34 @@
-FROM nvcr.io/nvidia/pytorch:24.02-py3
+FROM nvcr.io/nvidia/pytorch:23.12-py3
 
 WORKDIR /app
 
-# Install system dependencies
+# Install additional dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential \
+    curl \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 
-# Install Python dependencies (excluding torch as it's already in base image)
+# Remove torch from requirements as it's already installed
+RUN sed -i '/torch==/d' requirements.txt
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the Streamlit config
-COPY .streamlit /app/.streamlit
+# Copy application code
+COPY . .
 
-# Copy source code and ensure proper structure
-COPY src/ /app/src/
+# Create directory for model cache
+RUN mkdir -p /app/src/models/bart
 
-# Set Python path
+# Set environment variables
 ENV PYTHONPATH=/app
+ENV MODEL_LOCAL_DIR=/app/local_models/distilbart
 
-# Create cache directory for Hugging Face
-RUN mkdir -p /root/.cache/huggingface
-
-# Expose both Streamlit and FastAPI ports
-EXPOSE 8501
+# Expose the port
 EXPOSE 8000
 
-# Copy and set permissions for run script
-COPY run.py .
-RUN chmod +x run.py
-
-# Run both services
-CMD ["python", "run.py"]
+# Start the application
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
